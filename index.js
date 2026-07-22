@@ -63,6 +63,10 @@ const sites = [
 
       async function dropAndEditTextWidget(label, html) {
         console.log(`Processing ${label}`);
+        await page.evaluate(() => {
+          const region = document.getElementById('contentwidgettop');
+          if (region) region.scrollTop = region.scrollHeight;
+        });
         await page.waitForSelector('.widgets-wrapper .widgetItem[ltr="textWidget-0"]', { timeout: 30000 });
         const allSources = await page.$$('.widgets-wrapper .widgetItem[ltr="textWidget-0"]');
         const sourceElem = allSources[0];
@@ -70,13 +74,19 @@ const sites = [
         if (sourceElem && targetElem) {
           const sourceInfo = await sourceElem.boundingBox();
           const targetInfo = await targetElem.boundingBox();
+          const lastWidget = await page.$('#contentwidgettop .widgetItem:last-child');
+          let dropY = targetInfo.y + targetInfo.height / 2;
+          if (lastWidget) {
+            const lastInfo = await lastWidget.boundingBox();
+            dropY = lastInfo.y + lastInfo.height + 20;
+          }
           await page.mouse.move(sourceInfo.x + sourceInfo.width / 2, sourceInfo.y + sourceInfo.height / 2);
           await page.mouse.down();
-          await page.mouse.move(targetInfo.x + targetInfo.width / 2, targetInfo.y + targetInfo.height / 2, { steps: 20 });
+          await page.mouse.move(targetInfo.x + targetInfo.width / 2, dropY, { steps: 20 });
           await page.mouse.up();
         }
         console.log(`${label} dropped`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
         const newWidgetId = await page.evaluate(() => {
           const items = Array.from(document.querySelectorAll('#contentwidgettop .widgetItem[id^="textWidget-0-"]'));
@@ -94,6 +104,17 @@ const sites = [
           }, newWidgetId);
 
           await new Promise(resolve => setTimeout(resolve, 2000));
+          await page.evaluate(() => {
+            const iframe = document.querySelector('#superbox-innerbox iframe');
+            if (iframe && iframe.contentDocument) {
+              const subjectInput = iframe.contentDocument.querySelector('input[name="edit[subject]"]');
+              if (subjectInput) {
+                subjectInput.value = '';
+                subjectInput.dispatchEvent(new Event('input', { bubbles: true }));
+                subjectInput.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }
+          });
           await page.evaluate(() => {
             const iframe = document.querySelector('#superbox-innerbox iframe');
             if (iframe && iframe.contentDocument) {
@@ -115,7 +136,7 @@ const sites = [
                 textarea.dispatchEvent(new Event('change', { bubbles: true }));
               }
             }
-          }, html);
+          }, html.replace(/<span class="broker_agent_name"><\/span>/g, '<span class="broker_agent_name">&nbsp;</span>'));
           await new Promise(resolve => setTimeout(resolve, 1000));
           await page.evaluate(() => {
             const iframe = document.querySelector('#superbox-innerbox iframe');
@@ -140,10 +161,44 @@ const sites = [
         }
       }
 
-      async function dropAboutWidget() {
-        console.log('Processing about me widget');
-        await page.waitForSelector('.widgets-wrapper .widgetItem[ltr="AboutMeforAgent-0"]', { timeout: 30000 });
-        const sourceElem = await page.$('.widgets-wrapper .widgetItem[ltr="AboutMeforAgent-0"]');
+      const widgetNameMap = {
+        textWidget: 'Text',
+        AboutMeforAgent: 'About Me',
+        testimonial: 'Testimonial',
+        featuredListing: 'Featured Listings',
+        ask_questions: 'Have Questions?'
+      };
+
+      async function dropWidget(label, widgetType) {
+        const name = widgetNameMap[widgetType];
+        if (!name) {
+          console.log(`Unknown widget type: ${widgetType}, skipping`);
+          return;
+        }
+        console.log(`Processing ${label} (${widgetType})`);
+        await page.evaluate(() => {
+          const region = document.getElementById('contentwidgettop');
+          if (region) region.scrollTop = region.scrollHeight;
+        });
+        const allSources = await page.$$('.widgets-wrapper .widgetItem');
+        let targetIndex = -1;
+        for (let i = 0; i < allSources.length; i++) {
+          const nameSpan = await allSources[i].$('.widget-name');
+          if (nameSpan) {
+            const text = await nameSpan.evaluate(el => el.textContent.trim());
+            if (text === name) {
+              targetIndex = i;
+              break;
+            }
+          }
+        }
+
+        if (targetIndex === -1) {
+          console.log(`Widget "${name}" not found, skipping`);
+          return;
+        }
+
+        const sourceElem = allSources[targetIndex];
         const targetElem = await page.$('#contentwidgettop');
         if (sourceElem && targetElem) {
           const sourceInfo = await sourceElem.boundingBox();
@@ -159,15 +214,22 @@ const sites = [
           await page.mouse.move(targetInfo.x + targetInfo.width / 2, dropY, { steps: 20 });
           await page.mouse.up();
         }
-        console.log('About me widget dropped');
+        console.log(`${label} dropped`);
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
 
       for (const widget of widgets) {
         if (widget.type === 'textWidget') {
-          await dropAndEditTextWidget(`text widget ${widgets.indexOf(widget) + 1}`, widget.html);
-        } else if (widget.type === 'aboutMeWidget') {
-          await dropAboutWidget();
+          const index = widgets.filter(w => w.type === 'textWidget').indexOf(widget) + 1;
+          await dropAndEditTextWidget(`text widget ${index}`, widget.html);
+        } else if (widget.type === 'AboutMeforAgent') {
+          await dropWidget('about me widget', 'AboutMeforAgent');
+        } else if (widget.type === 'testimonial') {
+          await dropWidget('testimonial widget', 'testimonial');
+        } else if (widget.type === 'featuredListing') {
+          await dropWidget('featured listing widget', 'featuredListing');
+        } else if (widget.type === 'ask_questions') {
+          await dropWidget('ask questions widget', 'ask_questions');
         }
       }
 
